@@ -19,7 +19,7 @@ export default function Sidebar({ view, setView, state, user, onSignOut }: Props
   const emailShort = user?.email ? (user.email.length > 20 ? user.email.slice(0,18)+"…" : user.email) : ""
 
   return (
-    <aside className="w-[220px] min-w-[220px] glass-panel border-r border-white/06 flex flex-col fixed top-0 left-0 bottom-0 z-50">
+    <aside className="w-[220px] min-w-[220px] border-r border-white/06 flex flex-col fixed top-0 left-0 bottom-0 z-50">
       {/* Logo */}
       <div className="px-5 pt-6 pb-5 border-b border-white/06">
         <div className="mono text-[18px] font-bold text-gradient-blue tracking-tight">PropFlow</div>
