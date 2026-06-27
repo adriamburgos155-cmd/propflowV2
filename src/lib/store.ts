@@ -1,4 +1,4 @@
-// ── Pure utility functions (no hooks, no state) ────────
+// ── Pure utility functions ─────────────────────────────
 
 export function calcFinancials(state: any) {
   const fees           = state.expenses.filter((e: any) => e.type === 'fee').reduce((s: number, e: any) => s + e.amount, 0)
@@ -6,61 +6,60 @@ export function calcFinancials(state: any) {
   const net            = payouts - fees
   const roi            = fees > 0 ? ((net / fees) * 100) : 0
   const gap            = Math.max(0, fees - payouts)
-  const paCount        = state.accounts.filter((a: any) => a.status === 'pa').length
+  const paAccounts     = state.accounts.filter((a: any) => a.status === 'pa')
+  const paCount        = paAccounts.length
   const challengeCount = state.accounts.filter((a: any) => a.status === 'challenge').length
   const lostCount      = state.accounts.filter((a: any) => a.status === 'lost').length
   const nPayouts       = state.expenses.filter((e: any) => e.type === 'payout').length
   const nFees          = state.expenses.filter((e: any) => e.type === 'fee').length
-  return { fees, payouts, net, roi, gap, paCount, challengeCount, lostCount, nPayouts, nFees }
+
+  // Challenge success rate
+  const totalAttempted = paCount + lostCount
+  const successRate    = totalAttempted > 0 ? Math.round((paCount / totalAttempted) * 100) : 0
+
+  // Avg payout per PA
+  const avgPayoutPerPA = paAccounts.length > 0
+    ? paAccounts.reduce((s: number, a: any) => s + (a.avgPayout || 400), 0) / paAccounts.length
+    : 0
+
+  // Monthly income estimate (1.5 payouts/PA/month average)
+  const monthlyEstimate = paCount * avgPayoutPerPA * 1.5
+
+  // Avg cost per challenge
+  const avgChallengeCost = nFees > 0 ? fees / nFees : 140
+
+  // Months to break even from now
+  const monthsToBreakEven = monthlyEstimate > 0 && gap > 0
+    ? Math.ceil(gap / (monthlyEstimate * 0.5))
+    : 0
+
+  // Sustainability score 0-100
+  const sustainScore = Math.min(100, Math.round(
+    (paCount >= 2 ? 40 : paCount * 20) +
+    (roi > 0 ? Math.min(30, roi / 2) : 0) +
+    (successRate > 0 ? Math.min(30, successRate * 0.3) : 0)
+  ))
+
+  return {
+    fees, payouts, net, roi, gap, paCount, challengeCount, lostCount,
+    nPayouts, nFees, successRate, avgPayoutPerPA, monthlyEstimate,
+    avgChallengeCost, monthsToBreakEven, sustainScore, paAccounts,
+  }
 }
 
 export function getDecision(state: any, fin: any) {
-  const { paCount, challengeCount, net } = fin
+  const { paCount, challengeCount, net, monthlyEstimate } = fin
   const meta = state.aiConfig?.meta || 0
-
-  if (state.accounts.length === 0) return {
-    text:   'Agrega tu primera cuenta para ver la recomendación',
-    reason: 'PropFlow analiza tu portafolio en tiempo real y te dice la acción más inteligente ahora mismo.',
-    level:  'neutral',
-  }
-  if (paCount === 0 && challengeCount > 0) return {
-    text:   `Enfócate en pasar ${challengeCount > 1 ? 'tus ' + challengeCount + ' challenges' : 'tu challenge'} antes de abrir más`,
-    reason: `Tienes ${challengeCount} cuenta(s) en evaluación activa. Completa el proceso antes de gastar más en fees.`,
-    level:  'warning',
-  }
-  if (paCount === 0 && challengeCount === 0) return {
-    text:   'Abre al menos 2 challenges para comenzar el negocio',
-    reason: 'Sin cuentas activas ni en evaluación. El mínimo sostenible son 2 PAs activas generando payouts.',
-    level:  'danger',
-  }
-  if (paCount === 1 && challengeCount === 0) return {
-    text:   'Abre otro challenge ahora — necesitas llegar a 2 PAs activas',
-    reason: 'Con 1 PA activa estás bajo el mínimo sostenible. Invierte en otra evaluación mientras esta PA genera ingresos.',
-    level:  'warning',
-  }
-  if (paCount >= 2 && net < 0) return {
-    text:   'Mantén las PAs activas y prioriza recuperar la inversión',
-    reason: `Estás en el mínimo sostenible pero aún negativo ($${Math.abs(net).toLocaleString()} por recuperar). Cobra payouts antes de escalar.`,
-    level:  'info',
-  }
+  if (state.accounts.length === 0) return { text: 'Agrega tu primera cuenta para comenzar', reason: 'Registra tu primer challenge para que PropFlow pueda analizar tu negocio.', level: 'neutral' }
+  if (paCount === 0 && challengeCount > 0) return { text: `Pasa ${challengeCount > 1 ? 'tus challenges' : 'tu challenge'} — no abras más aún`, reason: `Tienes ${challengeCount} cuenta(s) en evaluación. Enfócate en completar el proceso antes de gastar más fees.`, level: 'warning' }
+  if (paCount === 0 && challengeCount === 0) return { text: 'Abre al menos 2 challenges para empezar', reason: 'Sin cuentas activas ni en evaluación. El mínimo sostenible son 2 PAs generando payouts al mes.', level: 'danger' }
+  if (paCount === 1 && challengeCount === 0) return { text: 'Abre otro challenge — necesitas 2 PAs mínimo', reason: 'Con 1 PA estás por debajo del mínimo sostenible. Reinvierte parte del payout en otra evaluación.', level: 'warning' }
+  if (paCount >= 2 && net < 0) return { text: 'Prioriza cobrar payouts — aún no recuperas la inversión', reason: `Tienes ${paCount} PAs activas generando ~${fmtUSD(monthlyEstimate)}/mes. Faltan ${fmtUSD(Math.abs(net))} para breakeven.`, level: 'info' }
   if (paCount >= 2 && net >= 0) {
-    const potencial = paCount * 400
-    if (meta > 0 && potencial < meta) return {
-      text:   `Escala a ${Math.ceil(meta / 400)} PAs activas para alcanzar tu meta de $${meta.toLocaleString()}/mes`,
-      reason: `Con ${paCount} PAs generas ~$${potencial.toLocaleString()}/mes. Tu meta es $${meta.toLocaleString()}/mes. Reinvierte parte de los payouts en nuevas evaluaciones.`,
-      level:  'success',
-    }
-    return {
-      text:   `Negocio sostenible — el siguiente paso es escalar a ${paCount + 2} PAs activas`,
-      reason: `Estás en positivo con ${paCount} PAs activas. Abre ${paCount <= 2 ? 2 : 1} challenge(s) más para aumentar el flujo mensual.`,
-      level:  'success',
-    }
+    if (meta > 0 && monthlyEstimate < meta) return { text: `Escala a ${Math.ceil(meta / (fin.avgPayoutPerPA * 1.5))} PAs para tu meta de ${fmtUSD(meta)}/mes`, reason: `Actualmente generas ~${fmtUSD(monthlyEstimate)}/mes. Reinvierte en más evaluaciones para alcanzar tu objetivo.`, level: 'success' }
+    return { text: `Negocio sostenible — escala a ${paCount + 2} PAs para crecer`, reason: `Generas ~${fmtUSD(monthlyEstimate)}/mes con ${paCount} PAs. El siguiente nivel son ${paCount + 2} PAs activas simultáneas.`, level: 'success' }
   }
-  return {
-    text:   'Registra tus movimientos para obtener la recomendación',
-    reason: 'Asegúrate de tener cuentas y movimientos al día.',
-    level:  'neutral',
-  }
+  return { text: 'Actualiza tus datos para ver la recomendación', reason: '', level: 'neutral' }
 }
 
 export function fmtUSD(n: number, compact = false) {
@@ -70,89 +69,56 @@ export function fmtUSD(n: number, compact = false) {
 
 export function fmtDate(d: string) {
   if (!d) return '—'
-  try {
-    return new Date(d + 'T00:00:00').toLocaleDateString('es-DO', {
-      day: '2-digit', month: 'short', year: 'numeric',
-    })
-  } catch (_) { return d }
+  try { return new Date(d + 'T00:00:00').toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' }) }
+  catch (_) { return d }
 }
 
-// ── Snowball: 3 realistic scenarios ───────────────────
-// Conservador: sin reinversión agresiva, pérdidas de cuentas
-// Moderado:    reinversión controlada, crecimiento lineal
-// Agresivo:    reinversión máxima, todo va para escalar
-// Techo: máximo 20 PAs simultáneas (límite realista de prop firms)
+// ── Monthly cashflow for bar chart ────────────────────
+export interface MonthlyBar { month: string; ingresos: number; gastos: number; neto: number }
 
-export interface SnowballPoint {
-  month: string
-  conservador: number
-  moderado: number
-  agresivo: number
+export function buildMonthlyCashflow(state: any): MonthlyBar[] {
+  const map = new Map<string, { ingresos: number; gastos: number }>()
+  for (const e of state.expenses) {
+    const d   = e.date ? e.date.slice(0, 7) : 'unknown'
+    const cur = map.get(d) || { ingresos: 0, gastos: 0 }
+    if (e.type === 'payout') cur.ingresos += e.amount
+    else cur.gastos += e.amount
+    map.set(d, cur)
+  }
+  const sorted = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b)).slice(-6)
+  return sorted.map(([key, val]) => {
+    const [y, m] = key.split('-')
+    const label = new Date(parseInt(y), parseInt(m) - 1).toLocaleDateString('es-DO', { month: 'short', year: '2-digit' })
+    return { month: label, ingresos: val.ingresos, gastos: val.gastos, neto: val.ingresos - val.gastos }
+  })
 }
+
+// ── Snowball 3 scenarios ──────────────────────────────
+export interface SnowballPoint { month: string; conservador: number; moderado: number; agresivo: number }
 
 export function buildSnowball(state: any, pct: number): SnowballPoint[] {
-  const allFees     = state.expenses.filter((e: any) => e.type === 'fee')
-  const avgCost     = allFees.length > 0
-    ? Math.min(300, allFees.reduce((s: number, e: any) => s + e.amount, 0) / allFees.length)
-    : 140
-
-  const paAccounts  = state.accounts.filter((a: any) => a.status === 'pa')
-  const currentPA   = Math.max(1, paAccounts.length)
-
-  // Avg payout per PA per month (realistic: 1-2 payouts/mes, ~$300-500 cada uno)
-  const avgPayoutPA = paAccounts.length > 0
-    ? Math.min(600, paAccounts.reduce((s: number, a: any) => s + (a.avgPayout || 400), 0) / paAccounts.length)
-    : 400
-
-  const totalGanado  = state.expenses.filter((e: any) => e.type === 'payout').reduce((s: number, e: any) => s + e.amount, 0)
-  const totalGastado = state.expenses.filter((e: any) => e.type === 'fee').reduce((s: number, e: any) => s + e.amount, 0)
-  const neto0        = Math.max(0, totalGanado - totalGastado)
-
-  // Max realistic PA accounts — Apex allows up to 20 simultaneous
-  const MAX_PA = 20
-
-  // Each scenario: different reinvestment rate and account failure rate
-  const scenarios = {
-    conservador: { reinvPct: Math.min(pct, 0.2),  failRate: 0.15, label: 'conservador' },
-    moderado:    { reinvPct: pct,                   failRate: 0.08, label: 'moderado'    },
-    agresivo:    { reinvPct: Math.min(pct * 1.4, 0.9), failRate: 0.03, label: 'agresivo' },
-  }
+  const allFees    = state.expenses.filter((e: any) => e.type === 'fee')
+  const avgCost    = allFees.length > 0 ? Math.min(300, allFees.reduce((s: number, e: any) => s + e.amount, 0) / allFees.length) : 140
+  const paAccounts = state.accounts.filter((a: any) => a.status === 'pa')
+  const currentPA  = Math.max(1, paAccounts.length)
+  const avgPayout  = paAccounts.length > 0 ? Math.min(600, paAccounts.reduce((s: number, a: any) => s + (a.avgPayout || 400), 0) / paAccounts.length) : 400
+  const neto0      = Math.max(0, state.expenses.filter((e: any) => e.type === 'payout').reduce((s: number, e: any) => s + e.amount, 0) - state.expenses.filter((e: any) => e.type === 'fee').reduce((s: number, e: any) => s + e.amount, 0))
+  const MAX_PA     = 20
 
   const run = (reinvPct: number, failRate: number) => {
-    let acumulado = neto0
-    let cuentas   = currentPA
-    const points: number[] = []
-
-    for (let m = 1; m <= 12; m++) {
-      // Some accounts fail each month (realistic churn)
-      const perdidas  = Math.floor(cuentas * failRate)
-      cuentas         = Math.max(1, cuentas - perdidas)
-
-      // Income this month: 1.5 payouts per PA on average (not always 2)
-      const gananciaMes = cuentas * avgPayoutPA * 1.5
-
-      // Reinvest portion to open new challenges
-      const reinversion = gananciaMes * reinvPct
-      const retiro      = gananciaMes * (1 - reinvPct)
-
-      // New accounts = reinvestment / cost, capped by MAX_PA
-      const nuevas  = Math.floor(reinversion / avgCost)
-      cuentas       = Math.min(MAX_PA, cuentas + nuevas)
-      acumulado    += retiro
-
-      points.push(Math.round(acumulado))
+    let acum = neto0; let pa = currentPA; const pts: number[] = []
+    for (let m = 0; m < 12; m++) {
+      pa = Math.max(1, pa - Math.floor(pa * failRate))
+      const income  = pa * avgPayout * 1.5
+      pa = Math.min(MAX_PA, pa + Math.floor(income * reinvPct / avgCost))
+      acum += income * (1 - reinvPct)
+      pts.push(Math.round(acum))
     }
-    return points
+    return pts
   }
 
-  const cons  = run(scenarios.conservador.reinvPct, scenarios.conservador.failRate)
-  const mod   = run(scenarios.moderado.reinvPct,    scenarios.moderado.failRate)
-  const agres = run(scenarios.agresivo.reinvPct,    scenarios.agresivo.failRate)
-
-  return Array.from({ length: 12 }, (_, i) => ({
-    month:        'M' + (i + 1),
-    conservador:  cons[i],
-    moderado:     mod[i],
-    agresivo:     agres[i],
-  }))
+  const c = run(Math.min(pct, 0.2), 0.15)
+  const m = run(pct, 0.08)
+  const a = run(Math.min(pct * 1.4, 0.85), 0.03)
+  return Array.from({ length: 12 }, (_, i) => ({ month: 'M' + (i + 1), conservador: c[i], moderado: m[i], agresivo: a[i] }))
 }
