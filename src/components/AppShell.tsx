@@ -68,7 +68,7 @@ export default function AppShell() {
           </header>
 
           <main className="p-7 flex-1 overflow-auto">
-            {view==="negocio"   && <NegocioView state={state} onAddExpense={()=>open("expense")} onDeleteExpense={async(id)=>{try{await deleteExpense(id);showToast("Movimiento eliminado")}catch{showToast("Error","error")}}}/>}
+            {view==="negocio"   && <NegocioView state={state}/>}
             {view==="cuentas"   && <CuentasView state={state} onAdd={()=>{setEditing(null);open("account")}} onEdit={(a:any)=>{setEditing(a);open("account")}} onDelete={async(id:number)=>{if(!confirm("¿Eliminar esta cuenta?"))return;try{await deleteAccount(id);showToast("Cuenta eliminada")}catch{showToast("Error","error")}}} onPayout={(a:any)=>{setPayoutTgt(a);open("payout")}}/>}
             {view==="consejero" && <ConsejeroView state={state} onOpenConfig={()=>open("aiConfig")}/>}
           </main>
